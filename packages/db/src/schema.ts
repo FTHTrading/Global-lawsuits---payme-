@@ -60,6 +60,7 @@ export const cases = pgTable(
     rawText: text("raw_text"),
     aiSummary: text("ai_summary"),
     adminNotes: text("admin_notes"),
+    reviewStatus: varchar("review_status", { length: 32 }).default("unreviewed"),
 
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at").defaultNow().notNull(),
@@ -190,6 +191,19 @@ export const claims = pgTable("claims", {
   filedAt: timestamp("filed_at"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+// ─── Extraction Facts Staging (Admin Review Queue) ────────
+
+export const extractedFactsStaging = pgTable("extracted_facts_staging", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  caseId: uuid("case_id").references(() => cases.id, { onDelete: "cascade" }).notNull(),
+  extractedData: jsonb("extracted_data").notNull(),
+  confidence: real("confidence").notNull(),
+  status: varchar("status", { length: 32 }).default("pending"), // pending, approved, rejected
+  reviewedBy: text("reviewed_by"),
+  reviewedAt: timestamp("reviewed_at"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
 // ─── Extraction Runs (audit log) ─────────────────────────────

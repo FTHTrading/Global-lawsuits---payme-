@@ -11,7 +11,7 @@
 
 import { eq, and, gte, lte } from "drizzle-orm";
 import { db, cases } from "@class-action-os/db";
-import type { CaseStatus } from "@class-action-os/shared";
+import type { CaseStatus, CaseType } from "@class-action-os/shared";
 
 export interface ClaimabilityAssessment {
   caseId: string;
@@ -23,18 +23,28 @@ export interface ClaimabilityAssessment {
   reason: string;
 }
 
+// Claimability Urgency Configuration
+const URGENCY_THRESHOLDS_BY_TYPE: Partial<Record<CaseType | "default", { critical: number; high: number; medium: number }>> = {
+  securities: { critical: 7, high: 14, medium: 30 }, // Brokerage records take time
+  employment: { critical: 5, high: 14, medium: 45 },
+  antitrust: { critical: 10, high: 21, medium: 60 },
+  default: { critical: 3, high: 7, medium: 30 },     // Consumer cases are usually fast
+};
+
 /**
- * Assess whether a case is currently claimable.
+ * Assess whether a case is currently claimable based on deterministic pipeline rules.
  */
 export function assessClaimability(caseRecord: {
   id: string;
   status: string;
+  caseType: string;
   claimDeadline: string | null;
   optOutDeadline: string | null;
   claimUrl: string | null;
 }): ClaimabilityAssessment {
   const now = new Date();
   const status = caseRecord.status as CaseStatus;
+  const caseType = (caseRecord.caseType as CaseType) ?? "default";
 
   // Calculate days until claim deadline
   let daysUntilDeadline: number | null = null;
@@ -50,13 +60,19 @@ export function assessClaimability(caseRecord: {
     status === "claims_open" &&
     (daysUntilDeadline === null || daysUntilDeadline > 0);
 
-  // Determine urgency
+  // Determine urgency using case-type specific thresholds
   let urgency: ClaimabilityAssessment["urgency"] = "none";
-  if (claimWindowOpen) {
-    if (daysUntilDeadline !== null && daysUntilDeadline <= 3) urgency = "critical";
-    else if (daysUntilDeadline !== null && daysUntilDeadline <= 7) urgency = "high";
-    else if (daysUntilDeadline !== null && daysUntilDeadline <= 30) urgency = "medium";
+  if (claimWindowOpen && daysUntilDeadline !== null) {
+    const thresholds =
+      URGENCY_THRESHOLDS_BY_TYPE[caseType as keyof typeof URGENCY_THRESHOLDS_BY_TYPE] ??
+      URGENCY_THRESHOLDS_BY_TYPE.default!;
+
+    if (daysUntilDeadline <= thresholds.critical) urgency = "critical";
+    else if (daysUntilDeadline <= thresholds.high) urgency = "high";
+    else if (daysUntilDeadline <= thresholds.medium) urgency = "medium";
     else urgency = "low";
+  } else if (claimWindowOpen && daysUntilDeadline === null) {
+    urgency = "low"; // Unknown deadline defaults to low until data is updated
   }
 
   // Determine if claimable
@@ -71,7 +87,7 @@ export function assessClaimability(caseRecord: {
   } else if (status === "dismissed") {
     reason = "Case was dismissed";
   } else if (status === "claims_open" && daysUntilDeadline !== null && daysUntilDeadline <= 0) {
-    reason = "Claim deadline has passed";
+    reason = `Claim deadline passed ${Math.abs(daysUntilDeadline)} days ago`;
   } else if (claimWindowOpen) {
     reason =
       daysUntilDeadline !== null

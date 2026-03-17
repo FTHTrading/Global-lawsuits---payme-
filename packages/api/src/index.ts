@@ -17,6 +17,7 @@ import { claimsRouter } from "./routes/claims.js";
 import { usersRouter } from "./routes/users.js";
 import { sourceHealthRouter } from "./routes/source-health.js";
 import { notificationsRouter } from "./routes/notifications.js";
+import { adminRouter } from "./routes/admin.js";
 
 const app = new Hono();
 
@@ -45,6 +46,7 @@ app.route("/api/claims", claimsRouter);
 app.route("/api/users", usersRouter);
 app.route("/api/sources", sourceHealthRouter);
 app.route("/api/notifications", notificationsRouter);
+app.route("/api/admin", adminRouter);
 
 // ─── Global Error Handler ────────────────────────────────────
 app.onError((err, c) => {

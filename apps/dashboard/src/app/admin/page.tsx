@@ -1,11 +1,13 @@
 "use client";
 
-import { Settings, RefreshCw, Play, Database, Zap, Users } from "lucide-react";
+import { Settings, RefreshCw, Play, Database, Zap, Users, CheckCircle, AlertTriangle } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 
 export default function AdminPage() {
   const [running, setRunning] = useState<string | null>(null);
+  const [pendingReviews, setPendingReviews] = useState<any[]>([]);
+  const [loadingReviews, setLoadingReviews] = useState(true);
 
   const actions = [
     {
@@ -46,7 +48,7 @@ export default function AdminPage() {
     {
       id: "sync",
       label: "Full Daily Sync",
-      description: "Run complete pipeline: ingest → triage → match → deadlines → email",
+      description: "Run complete pipeline: ingest ? triage ? match ? deadlines ? email",
       icon: RefreshCw,
       color: "brand",
     },
@@ -59,6 +61,39 @@ export default function AdminPage() {
     setRunning(null);
   }
 
+  async function fetchPendingReviews() {
+    setLoadingReviews(true);
+    try {
+      // In development, Next.js proxy/rewrites needs to map to 4000, 
+      // or we can just fetch from localhost:4000 directly.
+      const res = await fetch("http://localhost:4000/api/admin/reviews/pending");
+      const data = await res.json();
+      setPendingReviews(data.data || []);
+    } catch (err) {
+      console.error("Failed to load reviews", err);
+    }
+    setLoadingReviews(false);
+  }
+
+  async function approveReview(id: string) {
+    try {
+      const res = await fetch("http://localhost:4000/api/admin/reviews/" + id + "/approve", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reviewerId: "admin-local" })
+      });
+      if (res.ok) {
+        setPendingReviews((prev) => prev.filter((r) => r.id !== id));
+      }
+    } catch (err) {
+      console.error("Failed to approve review", err);
+    }
+  }
+
+  useEffect(() => {
+    fetchPendingReviews();
+  }, []);
+
   return (
     <div className="space-y-6">
       <div>
@@ -67,8 +102,43 @@ export default function AdminPage() {
           Admin Panel
         </h1>
         <p className="text-sm text-gray-500 mt-1">
-          Manage pipeline operations, trigger jobs, and review system status
+          Manage pipeline operations, review AI extractions, and trigger jobs
         </p>
+      </div>
+
+      {/* AI Extraction Reviews */}
+      <div className="space-y-3">
+        <h2 className="text-sm font-semibold text-brand-400 uppercase tracking-wider mb-3 flex items-center gap-2">
+          <CheckCircle className="w-4 h-4" />
+          Pending AI Extractions ({pendingReviews.length})
+        </h2>
+        {loadingReviews ? (
+          <p className="text-gray-500 text-sm">Loading pending reviews...</p>
+        ) : pendingReviews.length === 0 ? (
+          <p className="text-gray-500 text-sm">No pending extractions needing manual review.</p>
+        ) : (
+          <div className="grid grid-cols-1 gap-4">
+            {pendingReviews.map((review) => (
+              <div key={review.id} className="card p-4 border border-brand-500/20 bg-black/40">
+                <div className="flex justify-between items-start mb-3">
+                  <div>
+                    <h3 className="text-sm font-medium text-white">Case ID: {review.caseId}</h3>
+                    <p className="text-xs text-gray-400">Extraction Confidence: {(Math.round((review.confidence ?? 0) * 100))}%</p>
+                  </div>
+                  <button 
+                    onClick={() => approveReview(review.id)}
+                    className="px-3 py-1 bg-brand-500 hover:bg-brand-600 text-white text-xs font-semibold rounded transition"
+                  >
+                    Approve Extraction
+                  </button>
+                </div>
+                <div className="bg-black/60 p-3 rounded text-xs text-gray-300 font-mono overflow-auto max-h-40">
+                  {JSON.stringify(review.extractedPayload, null, 2)}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Quick Actions */}
@@ -107,33 +177,6 @@ export default function AdminPage() {
               </div>
             </button>
           ))}
-        </div>
-      </div>
-
-      {/* System Info */}
-      <div>
-        <h2 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">
-          System Info
-        </h2>
-        <div className="card">
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-            <div>
-              <p className="text-gray-500 text-xs">API</p>
-              <p className="text-white font-medium">Running</p>
-            </div>
-            <div>
-              <p className="text-gray-500 text-xs">Workers</p>
-              <p className="text-white font-medium">4 active</p>
-            </div>
-            <div>
-              <p className="text-gray-500 text-xs">Database</p>
-              <p className="text-white font-medium">PostgreSQL 16</p>
-            </div>
-            <div>
-              <p className="text-gray-500 text-xs">Redis</p>
-              <p className="text-white font-medium">Connected</p>
-            </div>
-          </div>
         </div>
       </div>
     </div>

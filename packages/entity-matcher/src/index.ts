@@ -111,6 +111,34 @@ export async function matchAllUsers(): Promise<number> {
 
 // ─── Core matching logic ─────────────────────────────────────
 
+// ─── Token Matcher ──────────────────────────────────────────
+
+/**
+ * Robust string comparison tool instead of naive .includes().
+ * Prevents false positives like "Apple" matching "Applebee's".
+ * Extracts alphanumeric words and does a set intersection.
+ */
+function checkTokenIntersection(textA: string, textB: string): boolean {
+  if (!textA || !textB) return false;
+  
+  const tokensA = textA.toLowerCase().match(/\b[a-z0-9]+\b/g) || [];
+  const tokensB = textB.toLowerCase().match(/\b[a-z0-9]+\b/g) || [];
+  
+  if (tokensA.length === 0 || tokensB.length === 0) return false;
+  
+  const setB = new Set(tokensB);
+  
+  // Requirement: if A is short (1-2 tokens), B must contain all of it, or vice versa
+  const aInB = tokensA.every((t) => setB.has(t));
+  if (aInB) return true;
+
+  const setA = new Set(tokensA);
+  const bInA = tokensB.every((t) => setA.has(t));
+  if (bInA) return true;
+
+  return false;
+}
+
 function evaluateMatch(
   user: typeof userProfiles.$inferSelect,
   caseRecord: typeof cases.$inferSelect,
@@ -130,12 +158,8 @@ function evaluateMatch(
 
   // 1. Direct defendant match against merchants
   for (const defendant of defendants) {
-    const defLower = defendant.toLowerCase();
     for (const merchant of userMerchants) {
-      if (
-        defLower.includes(merchant.toLowerCase()) ||
-        merchant.toLowerCase().includes(defLower)
-      ) {
+      if (checkTokenIntersection(defendant, merchant)) {
         score += 0.3;
         matchReasons.push(`Defendant "${defendant}" matches merchant "${merchant}"`);
         matchedFields.push("merchants");
@@ -146,15 +170,8 @@ function evaluateMatch(
 
   // 2. Entity alias matching (resolves "Meta" → "Facebook", "Instagram", etc.)
   for (const defendant of defendants) {
-    const defLower = defendant.toLowerCase();
     for (const [canonical, aliases] of entityAliasMap.entries()) {
-      if (
-        aliases.some(
-          (a) =>
-            defLower.includes(a.toLowerCase()) ||
-            a.toLowerCase().includes(defLower)
-        )
-      ) {
+      if (aliases.some((a) => checkTokenIntersection(defendant, a))) {
         // Check if user has any of this entity's aliases
         const userAllNames = [
           ...userMerchants,
@@ -162,14 +179,9 @@ function evaluateMatch(
           ...userBrokerages,
           ...userEmployers,
         ];
+        
         for (const alias of aliases) {
-          if (
-            userAllNames.some(
-              (u) =>
-                u.toLowerCase().includes(alias.toLowerCase()) ||
-                alias.toLowerCase().includes(u.toLowerCase())
-            )
-          ) {
+          if (userAllNames.some((u) => checkTokenIntersection(u, alias))) {
             score += 0.25;
             matchReasons.push(
               `Defendant "${defendant}" (entity: ${canonical}) matches user profile`
@@ -178,7 +190,7 @@ function evaluateMatch(
             break;
           }
         }
-        break;
+        break; // matched entity, move to next defendant
       }
     }
   }
@@ -186,14 +198,9 @@ function evaluateMatch(
   // 3. Product match
   for (const defendant of defendants) {
     for (const product of userProducts) {
-      if (
-        defendant.toLowerCase().includes(product.toLowerCase()) ||
-        product.toLowerCase().includes(defendant.toLowerCase())
-      ) {
+      if (checkTokenIntersection(defendant, product)) {
         score += 0.2;
-        matchReasons.push(
-          `Defendant "${defendant}" matches product "${product}"`
-        );
+        matchReasons.push(`Defendant "${defendant}" matches product "${product}"`);
         matchedFields.push("products");
         break;
       }
@@ -207,14 +214,9 @@ function evaluateMatch(
   ) {
     for (const defendant of defendants) {
       for (const employer of userEmployers) {
-        if (
-          defendant.toLowerCase().includes(employer.toLowerCase()) ||
-          employer.toLowerCase().includes(defendant.toLowerCase())
-        ) {
+        if (checkTokenIntersection(defendant, employer)) {
           score += 0.35;
-          matchReasons.push(
-            `Defendant "${defendant}" matches employer "${employer}"`
-          );
+          matchReasons.push(`Defendant "${defendant}" matches employer "${employer}"`);
           matchedFields.push("employers");
           break;
         }
@@ -226,14 +228,9 @@ function evaluateMatch(
   if (caseRecord.caseType === "securities") {
     for (const defendant of defendants) {
       for (const brokerage of userBrokerages) {
-        if (
-          defendant.toLowerCase().includes(brokerage.toLowerCase()) ||
-          brokerage.toLowerCase().includes(defendant.toLowerCase())
-        ) {
+        if (checkTokenIntersection(defendant, brokerage)) {
           score += 0.3;
-          matchReasons.push(
-            `Securities action against "${defendant}" — user has brokerage "${brokerage}"`
-          );
+          matchReasons.push(`Securities action against "${defendant}" — user has brokerage "${brokerage}"`);
           matchedFields.push("brokerages");
           break;
         }

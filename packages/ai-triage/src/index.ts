@@ -13,10 +13,8 @@
 
 import OpenAI from "openai";
 import { eq } from "drizzle-orm";
-import { db, cases, extractionRuns } from "@class-action-os/db";
+import { db, cases, extractionRuns, extractedFactsStaging } from "@class-action-os/db";
 import {
-  type ScoringWeights,
-  DEFAULT_SCORING_WEIGHTS,
   type CaseType,
   type CaseStatus,
 } from "@class-action-os/shared";
@@ -109,25 +107,31 @@ export async function extractCaseFields(
   const content = response.choices[0]?.message?.content ?? "{}";
   const extracted = JSON.parse(content) as ExtractionResult;
 
+  // Validate and scrub to conform to strict data formats
+  const cleanExtracted = Object.fromEntries(
+    Object.entries(extracted).map(([k, v]) => [k, v === "" ? null : v])
+  ) as unknown as ExtractionResult;
+
   const durationMs = Date.now() - start;
 
-  // Audit log
+  // Audit log (Immutable provenance tracker)
   await db.insert(extractionRuns).values({
     caseId,
     source,
     modelUsed: model,
     promptHash,
     inputTextLength: truncatedText.length,
-    extractedFields: extracted as any,
-    confidence: extracted.confidence ?? 0,
+    extractedFields: cleanExtracted as any,
+    confidence: cleanExtracted.confidence ?? 0,
     durationMs,
   });
 
-  return extracted;
+  return cleanExtracted;
 }
 
 /**
- * Run AI extraction on a case and update the DB record.
+ * Run AI extraction on a case. Routes data through the staging layer.
+ * Auto-applies to production if confidence is very high.
  */
 export async function triageCase(caseId: string): Promise<void> {
   const [caseRecord] = await db
@@ -144,148 +148,161 @@ export async function triageCase(caseId: string): Promise<void> {
     caseRecord.source
   );
 
+  // Write to staging area for admin review
   await db
-    .update(cases)
-    .set({
-      caseType: extracted.case_type ?? caseRecord.caseType,
-      status: extracted.status ?? caseRecord.status,
-      defendants:
-        extracted.defendants?.length > 0
-          ? extracted.defendants
-          : caseRecord.defendants,
-      claimDeadline: extracted.claim_deadline ?? caseRecord.claimDeadline,
-      optOutDeadline: extracted.opt_out_deadline ?? caseRecord.optOutDeadline,
-      objectionDeadline:
-        extracted.objection_deadline ?? caseRecord.objectionDeadline,
-      settlementAmount:
-        extracted.settlement_amount?.toString() ??
-        caseRecord.settlementAmount,
-      estimatedPayout: extracted.estimated_payout_notes
-        ? {
-            min: extracted.estimated_payout_min,
-            max: extracted.estimated_payout_max,
-            notes: extracted.estimated_payout_notes,
-          }
-        : caseRecord.estimatedPayout,
-      eligibilityText:
-        extracted.eligibility_text ?? caseRecord.eligibilityText,
-      classDefinition:
-        extracted.class_definition ?? caseRecord.classDefinition,
-      classPeriodStart:
-        extracted.class_period_start ?? caseRecord.classPeriodStart,
-      classPeriodEnd: extracted.class_period_end ?? caseRecord.classPeriodEnd,
-      geographicRestrictions:
-        extracted.geographic_restrictions ??
-        caseRecord.geographicRestrictions,
-      claimUrl: extracted.claim_url ?? caseRecord.claimUrl,
-      proofRequired:
-        extracted.proof_required?.length > 0
-          ? extracted.proof_required
-          : caseRecord.proofRequired,
-      aiSummary: extracted.summary ?? caseRecord.aiSummary,
-      extractionConfidence: extracted.confidence,
-      updatedAt: new Date(),
+    .insert(extractedFactsStaging)
+    .values({
+      caseId,
+      extractedData: extracted as any,
+      confidence: extracted.confidence ?? 0,
+      status: extracted.confidence >= 0.90 ? "approved" : "pending",
     })
-    .where(eq(cases.id, caseId));
+    .returning();
+
+  // If confidence is high enough, we auto-apply it.
+  // Otherwise, we mark the case for review.
+  if (extracted.confidence >= 0.90) {
+    await db
+      .update(cases)
+      .set({
+        caseType: extracted.case_type ?? caseRecord.caseType,
+        status: extracted.status ?? caseRecord.status,
+        defendants:
+          extracted.defendants?.length > 0
+            ? extracted.defendants
+            : caseRecord.defendants,
+        claimDeadline: extracted.claim_deadline ?? caseRecord.claimDeadline,
+        optOutDeadline: extracted.opt_out_deadline ?? caseRecord.optOutDeadline,
+        objectionDeadline:
+          extracted.objection_deadline ?? caseRecord.objectionDeadline,
+        settlementAmount:
+          extracted.settlement_amount?.toString() ??
+          caseRecord.settlementAmount,
+        estimatedPayout: extracted.estimated_payout_notes
+          ? {
+              min: extracted.estimated_payout_min,
+              max: extracted.estimated_payout_max,
+              notes: extracted.estimated_payout_notes,
+            }
+          : caseRecord.estimatedPayout,
+        eligibilityText:
+          extracted.eligibility_text ?? caseRecord.eligibilityText,
+        classDefinition:
+          extracted.class_definition ?? caseRecord.classDefinition,
+        classPeriodStart:
+          extracted.class_period_start ?? caseRecord.classPeriodStart,
+        classPeriodEnd: extracted.class_period_end ?? caseRecord.classPeriodEnd,
+        geographicRestrictions:
+          extracted.geographic_restrictions ??
+          caseRecord.geographicRestrictions,
+        claimUrl: extracted.claim_url ?? caseRecord.claimUrl,
+        proofRequired:
+          extracted.proof_required?.length > 0
+            ? extracted.proof_required
+            : caseRecord.proofRequired,
+        aiSummary: extracted.summary ?? caseRecord.aiSummary,
+        extractionConfidence: extracted.confidence,
+        reviewStatus: "auto_approved",
+        updatedAt: new Date(),
+      })
+      .where(eq(cases.id, caseId));
+  } else {
+    // Leave it in staging, just update the case to indicate review is needed
+    await db
+      .update(cases)
+      .set({
+        reviewStatus: "pending_review",
+        updatedAt: new Date(),
+      })
+      .where(eq(cases.id, caseId));
+  }
 }
 
 // ─── Scoring ──────────────────────────────────────────────────
 
 /**
- * Compute composite AI score for a case.
- * This is the ranking engine's core formula.
+ * Feature Extractor for Claimability & AI Scoring
+ * Maps raw case data into a clean, normalized feature vector suitable for rules or ML models.
  */
-export function computeScore(
-  caseData: {
-    source: string;
-    status: string;
-    settlement_amount: number | null;
-    claim_deadline: string | null;
-    match_score: number;
-    proof_required: string[];
-  },
-  weights: ScoringWeights = DEFAULT_SCORING_WEIGHTS
-): number {
-  // Source confidence: official > secondary
-  const sourceConfidenceMap: Record<string, number> = {
-    pacer: 1.0,
-    sec: 0.95,
-    ftc: 0.95,
-    eeoc: 0.9,
-    courtlistener: 0.8,
-    classactionorg: 0.5,
-    manual: 0.7,
+export interface CaseFeatureVector {
+  sourceReliability: number;     // 0.0 - 1.0 (authoritative source)
+  isWindowOpen: number;          // 0 or 1
+  daysToDeadline: number;        // integer, clamped or max if none
+  logValueScale: number;         // normalized representation of total settlement size
+  proofBarrier: number;          // 0.0 (easy) - 1.0 (hard/receipts required)
+  baseScore: number;             // Deterministic score based on feature matrix
+}
+
+export function extractFeatureVector(caseData: {
+  source: string;
+  status: string;
+  settlement_amount: number | null;
+  claim_deadline: string | null;
+  proof_required: string[];
+}): CaseFeatureVector {
+  const sourceMap: Record<string, number> = {
+    pacer: 1.0, sec: 0.95, ftc: 0.95, eeoc: 0.9, courtlistener: 0.8, classactionorg: 0.5
   };
-  const sourceConfidence = sourceConfidenceMap[caseData.source] ?? 0.5;
+  const sourceReliability = sourceMap[caseData.source] ?? 0.3;
 
-  // Claims open weight
-  const claimOpenWeight =
-    caseData.status === "claims_open" ? 1.0 : caseData.status === "settled" ? 0.6 : 0.2;
-
-  // Payout weight (log scale to handle range)
-  let estimatedPayoutWeight = 0;
-  if (caseData.settlement_amount) {
-    estimatedPayoutWeight = Math.min(
-      1.0,
-      Math.log10(caseData.settlement_amount) / 10
-    );
-  }
-
-  // User match weight
-  const userMatchWeight = caseData.match_score;
-
-  // Deadline urgency (higher if approaching)
-  let deadlineUrgency = 0;
+  const isWindowOpen = caseData.status === "claims_open" ? 1 : 0;
+  
+  let daysToDeadline = 999;
   if (caseData.claim_deadline) {
-    const daysUntil = Math.max(
-      0,
-      (new Date(caseData.claim_deadline).getTime() - Date.now()) /
-        (1000 * 60 * 60 * 24)
-    );
-    if (daysUntil <= 7) deadlineUrgency = 1.0;
-    else if (daysUntil <= 30) deadlineUrgency = 0.8;
-    else if (daysUntil <= 90) deadlineUrgency = 0.5;
-    else deadlineUrgency = 0.2;
+    const days = Math.floor((new Date(caseData.claim_deadline).getTime() - Date.now()) / 86400000);
+    daysToDeadline = Math.max(0, Math.min(days, 999));
   }
 
-  // Proof ease (no proof = easiest)
-  const hasNone =
-    caseData.proof_required.includes("none") ||
-    caseData.proof_required.length === 0;
-  const proofEase = hasNone ? 1.0 : 1.0 - caseData.proof_required.length * 0.15;
+  let logValueScale = 0;
+  if (caseData.settlement_amount && caseData.settlement_amount > 0) {
+    logValueScale = Math.min(1.0, Math.max(0, Math.log10(caseData.settlement_amount) / 10)); // ~10B = 1.0
+  }
 
-  const score =
-    sourceConfidence * weights.sourceConfidence +
-    claimOpenWeight * weights.claimOpenWeight +
-    estimatedPayoutWeight * weights.estimatedPayoutWeight +
-    userMatchWeight * weights.userMatchWeight +
-    deadlineUrgency * weights.deadlineUrgency +
-    Math.max(0, proofEase) * weights.proofEase;
+  let proofBarrier = 0.5; // default moderate
+  if (caseData.proof_required.includes("none") || caseData.proof_required.length === 0) {
+    proofBarrier = 0.1;
+  } else if (caseData.proof_required.includes("receipt") || caseData.proof_required.includes("tax_document")) {
+    proofBarrier = 0.9;
+  }
 
-  return Math.round(score * 1000) / 1000;
+  // Linear combination fallback until XGBoost model is trained on labeled data
+  const baseScore = 
+    (sourceReliability * 0.2) + 
+    (isWindowOpen * 0.4) + 
+    (logValueScale * 0.2) + 
+    ((1.0 - proofBarrier) * 0.2) - 
+    (daysToDeadline < 14 && isWindowOpen ? 0 : 0.1);
+
+  return {
+    sourceReliability,
+    isWindowOpen,
+    daysToDeadline,
+    logValueScale,
+    proofBarrier,
+    baseScore: Math.max(0, Math.round(baseScore * 1000) / 1000)
+  };
 }
 
 /**
- * Batch re-score all cases.
+ * Batch re-score all cases using deterministic features
  */
 export async function rescoreAllCases(): Promise<void> {
   const allCases = await db.select().from(cases);
 
   for (const c of allCases) {
-    const score = computeScore({
+    const features = extractFeatureVector({
       source: c.source,
       status: c.status,
-      settlement_amount: c.settlementAmount
-        ? parseFloat(c.settlementAmount)
-        : null,
+      settlement_amount: c.settlementAmount ? parseFloat(c.settlementAmount) : null,
       claim_deadline: c.claimDeadline,
-      match_score: c.matchScore ?? 0,
       proof_required: (c.proofRequired as string[]) ?? [],
     });
 
+    // In a mature setup, we'd log the feature vector to a feature store
+    // For now, write the base deterministic score
     await db
       .update(cases)
-      .set({ aiScore: score, updatedAt: new Date() })
+      .set({ aiScore: features.baseScore, updatedAt: new Date() })
       .where(eq(cases.id, c.id));
   }
 }
@@ -301,5 +318,3 @@ function simpleHash(s: string): string {
   }
   return hash.toString(36);
 }
-
-export { DEFAULT_SCORING_WEIGHTS };
