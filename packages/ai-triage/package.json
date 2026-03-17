@@ -1,0 +1,14 @@
+{
+  "name": "@class-action-os/ai-triage",
+  "version": "0.1.0",
+  "private": true,
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "dependencies": {
+    "@class-action-os/shared": "*",
+    "@class-action-os/db": "*",
+    "drizzle-orm": "^0.29.3",
+    "openai": "^4.26.0"
+  },
+  "devDependencies": { "typescript": "^5.3.3" }
+}

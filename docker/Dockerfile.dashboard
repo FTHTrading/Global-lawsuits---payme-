@@ -1,0 +1,20 @@
+FROM node:20-alpine AS base
+WORKDIR /app
+COPY package.json package-lock.json* ./
+COPY apps/dashboard/package.json apps/dashboard/
+
+FROM base AS deps
+RUN npm ci --workspace=@class-action-os/dashboard
+
+FROM deps AS builder
+COPY apps/dashboard/ apps/dashboard/
+RUN npm run build --workspace=@class-action-os/dashboard
+
+FROM node:20-alpine AS runner
+WORKDIR /app
+ENV NODE_ENV=production
+COPY --from=builder /app/apps/dashboard/.next/standalone ./
+COPY --from=builder /app/apps/dashboard/.next/static ./apps/dashboard/.next/static
+COPY --from=builder /app/apps/dashboard/public ./apps/dashboard/public
+EXPOSE 3000
+CMD ["node", "apps/dashboard/server.js"]

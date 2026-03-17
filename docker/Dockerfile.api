@@ -1,0 +1,22 @@
+FROM node:20-alpine AS base
+WORKDIR /app
+COPY package.json package-lock.json* ./
+COPY packages/shared/package.json packages/shared/
+COPY packages/db/package.json packages/db/
+COPY packages/source-connectors/package.json packages/source-connectors/
+COPY packages/case-normalizer/package.json packages/case-normalizer/
+COPY packages/ai-triage/package.json packages/ai-triage/
+COPY packages/claimability-engine/package.json packages/claimability-engine/
+COPY packages/entity-matcher/package.json packages/entity-matcher/
+COPY packages/deadline-monitor/package.json packages/deadline-monitor/
+COPY packages/claim-builder/package.json packages/claim-builder/
+COPY packages/api/package.json packages/api/
+
+FROM base AS deps
+RUN npm ci --workspace=@class-action-os/api
+
+FROM base AS runner
+COPY --from=deps /app/node_modules ./node_modules
+COPY packages/ packages/
+EXPOSE 4000
+CMD ["npx", "tsx", "packages/api/src/index.ts"]

@@ -1,0 +1,40 @@
+{
+  "name": "@class-action-os/workers",
+  "version": "0.1.0",
+  "private": true,
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "ingest": "tsx src/cli.ts ingest --all",
+    "ingest:ftc": "tsx src/cli.ts ingest --source ftc",
+    "ingest:eeoc": "tsx src/cli.ts ingest --source eeoc",
+    "ingest:courtlistener": "tsx src/cli.ts ingest --source courtlistener",
+    "ingest:sec": "tsx src/cli.ts ingest --source sec",
+    "ingest:pacer": "tsx src/cli.ts ingest --source pacer",
+    "ingest:classactionorg": "tsx src/cli.ts ingest --source classactionorg",
+    "sync:daily": "tsx src/cli.ts sync",
+    "triage": "tsx src/cli.ts triage",
+    "match": "tsx src/cli.ts match",
+    "deadlines": "tsx src/cli.ts deadlines"
+  },
+  "dependencies": {
+    "@class-action-os/shared": "*",
+    "@class-action-os/db": "*",
+    "@class-action-os/source-connectors": "*",
+    "@class-action-os/case-normalizer": "*",
+    "@class-action-os/ai-triage": "*",
+    "@class-action-os/entity-matcher": "*",
+    "@class-action-os/deadline-monitor": "*",
+    "@class-action-os/claimability-engine": "*",
+    "bullmq": "^5.1.0",
+    "dotenv": "^16.3.1",
+    "drizzle-orm": "^0.29.3",
+    "pino": "^8.17.2",
+    "pino-pretty": "^10.3.1"
+  },
+  "devDependencies": {
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.3"
+  }
+}

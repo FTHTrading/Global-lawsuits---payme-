@@ -1,0 +1,24 @@
+{
+  "name": "@class-action-os/db",
+  "version": "0.1.0",
+  "private": true,
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "migrate": "drizzle-kit push",
+    "generate": "drizzle-kit generate",
+    "seed": "tsx src/seeds/seed.ts",
+    "studio": "drizzle-kit studio"
+  },
+  "dependencies": {
+    "@class-action-os/shared": "*",
+    "dotenv": "^16.3.1",
+    "drizzle-orm": "^0.29.3",
+    "postgres": "^3.4.3"
+  },
+  "devDependencies": {
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.3"
+  }
+}

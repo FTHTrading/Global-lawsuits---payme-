@@ -1,0 +1,47 @@
+{
+  "name": "class-action-os",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AI-powered class action and refund intelligence platform",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "concurrently \"npm run dev:api\" \"npm run dev:workers\" \"npm run dev:dashboard\"",
+    "dev:api": "npm -w packages/api run dev",
+    "dev:workers": "npm -w packages/workers run dev",
+    "dev:dashboard": "npm -w apps/dashboard run dev",
+    "build": "npm run build --workspaces",
+    "db:migrate": "npm -w packages/db run migrate",
+    "db:seed": "npm -w packages/db run seed",
+    "db:generate": "npm -w packages/db run generate",
+    "ingest": "npm -w packages/workers run ingest",
+    "ingest:ftc": "npm -w packages/workers run ingest:ftc",
+    "ingest:eeoc": "npm -w packages/workers run ingest:eeoc",
+    "ingest:courtlistener": "npm -w packages/workers run ingest:courtlistener",
+    "ingest:sec": "npm -w packages/workers run ingest:sec",
+    "sync:daily": "npm -w packages/workers run sync:daily",
+    "lint": "eslint . --ext .ts,.tsx",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@typescript-eslint/eslint-plugin": "^8.57.0",
+    "@typescript-eslint/parser": "^8.57.0",
+    "concurrently": "^8.2.2",
+    "drizzle-kit": "^0.21.4",
+    "eslint": "^8.56.0",
+    "prettier": "^3.2.0",
+    "typescript": "^5.3.3",
+    "vitest": "^1.2.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "drizzle-orm": "^0.29.5"
+  }
+}
